@@ -1447,6 +1447,78 @@ Service discovery provides controlled resolution of internal service endpoints a
 
 A correlation identifier is created at the gateway or trusted entry point and propagated through synchronous calls, asynchronous messages, audit events, logs, traces, notifications, and approved integration exchanges. It enables accountable reconstruction of a workflow without placing sensitive content in every telemetry record. Correlation identifiers must be unique, non-sensitive, protected from spoofing where practical, and retained according to the relevant record policy.
 
+## 13.18 Security Architecture
+
+Security architecture applies Zero Trust across users, workloads, networks, data stores, integrations, and administrative operations. No request is trusted because of its network location or agency membership. Every protected request is authenticated, explicitly authorized, encrypted in transit, checked against current policy, and made attributable through audit and telemetry.
+
+Authentication is delegated to an approved identity provider through unique identities and short-lived credentials or sessions. MFA is mandatory for privileged and restricted-data access, and stronger reauthentication or dual approval is applied to high-risk actions such as access changes, configuration activation, protected export, and emergency-feature enablement. Shared accounts and embedded credentials are prohibited.
+
+Authorization combines RBAC with ABAC. RBAC grants approved functional roles; ABAC restricts each request by agency, purpose, geography, data classification, assignment, policy state, and delegation expiry. Secrets, keys, certificates, and tokens are separately managed, scoped to an environment and workload, encrypted, rotated, revocable, and never included in code or logs. Key-management controls define ownership, access policy, rotation, recovery, and revocation for encryption keys.
+
+## 13.19 Observability and Service Objectives
+
+Observability unifies structured logging, metrics, distributed tracing, service dashboards, alerting, health checks, and audit integrity into an operational picture. Dashboards must show both component health and the impact on approved workflows: for example, an integration may be reachable while its data is stale, or an AI service may be available while policy requires it to abstain.
+
+Alerts are based on owned, tested thresholds and route to a named support or operational owner with severity, correlation context, and a runbook. Alert rules must suppress duplicates and avoid exposing restricted content. Health checks distinguish liveness, readiness, dependency availability, data freshness, storage/audit integrity, and recovery capability.
+
+Service-level indicators (SLIs) measure observable service behaviour such as authorized request success, workflow completion, source freshness, integration lag, audit-write success, and recovery success. Service-level objectives (SLOs) define the agreed target or reliability expectation for selected SLIs during the pilot. SLOs and error-budget decisions are set through service agreement and risk review; they do not override safety, manual fallback, or the need to show degraded state.
+
+## 13.20 Configuration Management and Policy Control
+
+Configuration management controls environment-specific values and city-specific policy without embedding them in application code. Environment configuration includes approved endpoints, capacity limits, credentials references, observability destinations, and feature availability. City-specific policy includes pilot geography, role scopes, source eligibility, operating playbooks, taxonomies, thresholds, retention, notification routing, and approved language/content.
+
+All material configuration is versioned with an owner, rationale, validation result, approver, effective time, and rollback reference. Configuration promotion follows the environment path and requires compatibility and security checks. A configuration rollback restores the last verified version and records the reason, impact, and affected service/workflow.
+
+Feature flags are a controlled subset of configuration for staged rollout, selective enablement, and independent suspension. They are not a mechanism to evade governance: a flag cannot activate a new city, data source, emergency workflow, AI model, external action, or physical-control integration without the approvals required for that scope change.
+
+## 13.21 Caching Architecture
+
+Caching is used to improve responsiveness without becoming an ungoverned source of operational truth. API caches may retain authorized, non-sensitive or safely scoped read responses; dashboard caches may retain short-lived derived views; GIS caches may retain approved base map, geometry, and static reference layers. Event status, authorization, emergency context, and current source state are cached only where their expiry and invalidation behaviour cannot misrepresent freshness or access.
+
+Each cache class has a documented TTL strategy based on the volatility, sensitivity, and operational consequence of its content. Invalidation occurs on material event transition, policy/configuration change, access-scope change, source correction, retention/deletion event, or geography/layer update. Cached responses retain freshness/data-state metadata and must be re-authorized before use when the underlying access context can change.
+
+If a cache is unavailable or invalid, the service reads from its governed source of truth within the applicable timeout or returns a qualified degraded result. Cache entries are encrypted where appropriate, segregated by environment and access scope, monitored for staleness/eviction/invalidation failure, and never used as the sole record for audit or workflow commands.
+
+## 13.22 API Governance
+
+All approved APIs use versioned, HTTPS-only contracts. Breaking changes require a new version and documented migration/retirement path; non-breaking changes retain compatibility and are communicated to named consumers. Each API has an owner, approved purpose, authentication method, authorization attributes, schema, classification, rate limit, dependency behaviour, monitoring, and support contact.
+
+API governance enforces schema/type/size validation, bounded filtering, pagination with server-side limits and opaque cursors, idempotency for applicable state changes, and correlation identifiers in requests and responses. Rate limits are applied by consumer identity, route, workload, and risk category, with protected operational workloads separated from bulk analytics or export activity.
+
+Error responses use a consistent, safe standard containing a stable code, readable message, correlation identifier, and non-sensitive remediation hint. They do not reveal secrets, internal topology, hidden resources, or protected metadata. Dependency failure returns a qualified unavailable or degraded response rather than stale or empty data presented as current.
+
+## 13.23 Data Governance
+
+Data governance assigns an owner, purpose, classification, access policy, retention schedule, lineage, quality expectation, and permitted use to each source, dataset, derived data product, and report. Data is classified at least as public, internal operational, confidential operational, or restricted/sensitive, with controls for storage, processing, export, logging, analytics, and environment access.
+
+Lineage records source, observed and received time, transformation or methodology version, configuration, execution time, and owner. It enables a user or reviewer to distinguish raw observation, derived measure, inference, and report result. Retention is based on approved purpose, source ownership, legal/operational requirement, and classification; expiry/deletion and legal holds are scope-specific and auditable.
+
+Backup, restore, and archival are governed data-lifecycle activities. Backups are encrypted, access-controlled, integrity-checked, retention-managed, and subject to tested restoration. Archival retains only approved data for the necessary period, preserves classification and auditability, and remains retrievable only by authorized processes. Production data is not reused for analytics, model training, research, or external sharing without separately approved purpose and controls.
+
+## 13.24 AI Governance
+
+AI governance treats each model, prompt/template, taxonomy, threshold, feature pipeline, dataset, and deployment configuration as a versioned, owned artefact. A model registry records the artefact identity, purpose, approved use case, data lineage, evaluation evidence, owner, approval status, runtime environment, monitoring plan, and rollback/suspension path.
+
+Promotion requires documented local-condition evaluation, data-quality and bias review, security/privacy assessment, safety review, release approval, and rollback plan. An approved human remains responsible for verification and any material operational decision. AI outputs must display the evidence, confidence, freshness, limitations, model/version, and policy/playbook context needed for that human review.
+
+Drift monitoring covers input, data-quality, calibration, performance, operational context, override/rejection, and relevant fairness signals. Threshold breach, model incident, policy change, or loss of required data triggers review, restriction, or suspension. Rollback restores a previously approved model/configuration only after compatibility and safety checks; the platform never silently retrains or substitutes an unapproved model.
+
+## 13.25 Operational Governance
+
+Operational governance controls how TrafficMind AI is changed, supported, and recovered. Change management classifies changes by risk and requires an owner, impact assessment, approval, implementation plan, test evidence, communication plan, rollback/suspension path, and post-change review where applicable. Changes to policy, data, model, source, role, geography, workflow, or external integration are reviewed as potential scope changes, not routine maintenance.
+
+Incident management defines detection, severity, triage, containment, communications, evidence preservation, recovery, and post-incident learning for service, security, privacy, data-quality, model, and integration events. Runbooks provide approved operational steps for common incidents, degraded operation, access issues, connector/model suspension, backup/restore, and manual fallback. They are versioned, tested, accessible to the appropriate support roles, and reviewed after material incidents.
+
+The release strategy is progressive and reversible: build and validate in lower environments, obtain QA and UAT evidence, enable only approved pilot scope, monitor impact, and retain a rollback or restriction path. Support escalation identifies first-line operational support, technical component owner, security/privacy escalation, data/source owner, vendor contact, and agency decision authority. Escalation never transfers statutory authority to the platform team.
+
+## 13.26 Compliance and Government Readiness
+
+Compliance readiness is demonstrated through evidence, not a generic claim of certification. The platform supports required audit, privacy, security review, data-governance, records, procurement, accessibility, and agency operating obligations applicable to the approved pilot. The responsible agency and qualified advisers confirm the specific legal and regulatory obligations before deployment.
+
+Security and privacy reviews assess the active scope, data flows, identities, integrations, environment, suppliers, AI use, retention, and incident procedures. Findings are tracked to a named owner and resolved, accepted as residual risk by the appropriate authority, or used to restrict/defer release. High-risk changes require re-review when they affect the original assurance boundary.
+
+Government readiness requires a named sponsor and authority matrix, role- and purpose-based access, auditable records, support and lifecycle ownership, controlled procurement/vendor dependencies, local policy configuration, pilot evidence, and a justified decision to proceed, correct, restrict, or stop. It does not authorize live deployment, data access, or operational action until the relevant agency approvals and release gates are complete.
+
 ---
 
 # 14. Scalability Strategy
