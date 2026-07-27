@@ -8,7 +8,7 @@
 **Date:** 27 July 2026  
 **Owner:** Loopframe Labs / TrafficMind AI Architecture Team  
 **Classification:** Internal — Architecture and Delivery Planning  
-**Status:** Draft for architecture, product, security, data-governance, safety, and agency validation  
+**Status:** Approved Baseline  
 **Product:** TrafficMind AI  
 **Primary operating context:** Coimbatore, Tamil Nadu, India  
 **Predecessor documents:** TMA-ARCH-001 — Master System Architecture; TMA-ARCH-002 — Logical Architecture
@@ -969,3 +969,566 @@ The profiles below expand the approved catalogue only. “Availability expectati
 ## 10.23 Component Profile Traceability Statement
 
 Every profile in this section expands exactly one catalogue component and therefore exactly one approved Logical Service. The profiles retain the purpose, ownership, non-responsibility, authority, safe-failure, security, audit, configuration, observability, and governance constraints established in TMA-ARCH-001 and TMA-ARCH-002. No profile authorizes new capability, technology selection, deployment arrangement, external control, or change to approved architecture decisions.
+
+# 11. Component Collaboration Architecture
+
+This section defines the logical rules, boundaries, and principles governing how TrafficMind AI components interact, share state, and isolate failures. It establishes the foundational constraints for component collaboration without mandating specific APIs, HTTP protocols, or deployment topologies.
+
+## 11.1 Component Interactions
+- **Logical Messaging:** Components interact exclusively through defined logical messages (commands, events, and queries). 
+- **Event Choreography:** Components react to state changes in other domains by consuming emitted domain events rather than direct orchestration, reducing temporal coupling.
+- **Query Containment:** Cross-component state retrieval is constrained. Components must rely on their own materialized views of shared state (built via event consumption) rather than synchronous queries across boundaries during critical transaction paths.
+- **Command Delegation:** A component may issue a command to another component only when delegating a specific, authorized responsibility that falls entirely within the receiving component's designated domain.
+
+## 11.2 Component Ownership
+- **State Sovereignty:** Each component is the exclusive owner of its internal state and domain data. No component may directly read or mutate the database or persistent state of another component.
+- **Rule Encapsulation:** Business rules and domain logic are strictly encapsulated within their owning component. Rules are not distributed across components or embedded in integration layers.
+- **Lifecycle Control:** A component owns the lifecycle of the entities within its domain. Other components must request state changes through authorized commands or react to lifecycle events.
+
+## 11.3 Collaboration Boundaries
+- **Strict Bounded Contexts:** Each component operates within a defined bounded context. Language, models, and entities used within one component are conceptually distinct from those in another, even if they share the same name (e.g., an "Incident" in the Traffic Management Component is distinct from an "Incident" in the Reporting Component).
+- **Anti-Corruption Layers:** When components collaborate, they must translate concepts between their respective boundaries to prevent domain model leakage and ensure logical isolation.
+- **Synchronous vs. Asynchronous Boundaries:** Synchronous collaboration is restricted to explicit query operations where real-time consistency is non-negotiable. All state-mutating collaborations across boundaries must be asynchronous.
+
+## 11.4 Isolation Rules
+- **Domain Isolation:** A component must not contain logic that depends on the internal workings, data structures, or algorithms of another component.
+- **Data Isolation:** Shared databases are strictly prohibited. Components must persist data independently.
+- **Execution Isolation:** The execution thread of one component must not span across another component's boundary for any state-mutating operation.
+
+## 11.5 Dependency Rules
+- **Acyclic Dependencies:** Component dependencies must form a Directed Acyclic Graph (DAG). Circular dependencies (Component A depends on Component B, which depends on Component A) are prohibited.
+- **Downward Dependency Principle:** Higher-level policy components (e.g., Incident Management) depend on lower-level capability components (e.g., Sensor Data Ingestion), never the reverse.
+- **Dependency Inversion:** Where necessary, collaboration dependencies must be inverted using logical abstractions (e.g., interfaces or defined event contracts) to prevent concrete coupling.
+
+## 11.6 Failure Isolation
+- **Autonomous Operation:** A component must be designed to continue operating, possibly in a degraded mode, if a collaborating component fails or becomes unreachable.
+- **Fault Containment:** Failures (e.g., exceptions, timeouts) within one component must not cascade and cause systemic failure in collaborating components.
+- **Graceful Degradation:** Components must handle missing external data or rejected commands safely, utilizing default behaviors, cached state, or fallback logic.
+
+## 11.7 Cross-Component Communication
+- **Contract-Driven Communication:** All communication must adhere to strictly defined, versioned logical contracts.
+- **Idempotency:** All cross-component commands and event handlers must be logically idempotent to ensure safe retries and fault tolerance without unintended side effects.
+- **Eventual Consistency:** System-wide consistency is achieved eventually through event propagation. Components must be designed to tolerate and handle logically stale data.
+
+## 11.8 Responsibility Delegation
+- **Explicit Mandates:** A component delegates responsibility only when the task falls outside its defined mandate and within the mandate of the receiving component.
+- **Fire-and-Forget Delegation:** When delegating via events, the delegating component relinquishes control over how and when the receiving component fulfills the responsibility.
+- **Authorized Delegation:** Delegation must carry the necessary logical authorization context, ensuring the receiving component can validate the legitimacy of the request based on the originator's identity and rights.
+
+# 12. Component Communication Model
+
+This section defines the logical communication patterns between components. It focuses on the semantics of interaction, independent of specific message formats, network protocols, or implementation frameworks.
+
+## 12.1 Request / Response
+- **Definition:** A synchronous or logically coupled interaction where a component requests an operation or data and blocks or logically waits for the direct outcome before proceeding with its main execution path.
+- **Usage:** Restricted to operations where immediate, strongly consistent feedback is essential to the business transaction, or where UI/client interactions demand real-time confirmation.
+- **Constraint:** Overuse of request/response coupling across boundaries leads to cascading failures and should be avoided in favor of asynchronous events where possible.
+
+## 12.2 Commands
+- **Definition:** An imperative instruction sent from one component to another to perform a specific action or change state (e.g., `UpdateSignalPhase`, `DispatchEmergencyVehicle`).
+- **Characteristics:** Commands are always directed to a single, specific receiver. They describe an intent to alter the system's state.
+- **Handling:** The receiver of a command has the authority to validate, accept, or reject the command based on its internal domain rules and current state. 
+
+## 12.3 Queries
+- **Definition:** A request for information that does not alter the observable state of the system (side-effect free).
+- **Characteristics:** Queries are idempotent and safe to retry. They return data reflecting the state at the time of processing.
+- **Handling:** Cross-boundary queries should ideally target materialized views optimized for the query, rather than executing complex joins across the domain's transactional write models.
+
+## 12.4 Events
+- **Definition:** A declarative notification that something significant has occurred within a domain (e.g., `SignalPhaseChanged`, `IncidentDetected`).
+- **Characteristics:** Events describe facts about the past. They are broadcast or published to any interested subscribers (publish-subscribe pattern) rather than being directed at a specific receiver.
+- **Handling:** The publisher of an event does not know or care who consumes it. Consumers react to events to trigger their own domain logic or update their localized state views.
+
+## 12.5 Notifications
+- **Definition:** A specific type of event intended to alert external actors, human operators, or distinct external systems about a condition or state change, rather than internal component coordination.
+- **Characteristics:** Notifications often carry formatting, routing preferences, or urgency levels (e.g., SMS alerts, dashboard pop-ups).
+- **Handling:** Internal components should emit domain events; specialized notification components consume these events to generate and route human- or system-facing notifications.
+
+## 12.6 Published Facts
+- **Definition:** Authoritative assertions of state emitted by the owning component to share its truth with the rest of the system (e.g., the confirmed location of a sensor).
+- **Characteristics:** Published facts represent the official, immutable record of a state transition. They form the basis of eventual consistency across the architecture.
+- **Handling:** Only the authoritative owner of a domain entity is permitted to publish facts regarding that entity.
+
+## 12.7 Consumed Facts
+- **Definition:** Facts ingested by a component that originated in another domain. 
+- **Characteristics:** A component consumes facts to build its own localized, read-optimized representation of external state (a materialized view).
+- **Handling:** Consumed facts must be translated into the consuming component's bounded context. The consuming component treats these facts as eventually consistent and read-only.
+
+## 12.8 Callback Patterns
+- **Definition:** An asynchronous interaction where a component initiates a long-running process and provides a logical address or reference for the responder to deliver the result upon completion.
+- **Characteristics:** Allows a component to relinquish execution threads while waiting for delayed outcomes without relying on synchronous polling.
+- **Handling:** The initiating component must maintain sufficient correlation context to resume processing when the callback is invoked.
+
+## 12.9 Communication Constraints
+- **Format Agnosticism:** Components must interact based on logical schemas and contracts, completely abstracted from the underlying serialization format (e.g., JSON, Protobuf).
+- **Protocol Independence:** The communication model does not assume or require HTTP, gRPC, AMQP, or any specific transport. The logical interaction (command, event, query) dictates the semantic requirement, not the protocol.
+- **Temporal Decoupling:** State-mutating cross-component interactions must default to asynchronous patterns to ensure that the unavailability of one component does not prevent another from functioning.
+- **Tolerant Reader Principle:** Components must be designed to ignore unrecognized fields in messages and events to allow for non-breaking forward evolution of communication contracts.
+
+# 13. Component Dependency Architecture
+
+This section defines the logical rules and constraints governing how TrafficMind AI components depend upon one another. It establishes a dependency hierarchy that protects core capabilities from changes in peripheral domains and prevents cascading failures.
+
+## 13.1 Dependency Philosophy
+- **Minimize Coupling:** Dependencies must be minimized and justified. A component should only depend on what it strictly needs to fulfill its defined mandate.
+- **Stable Dependencies:** Components should depend on components that are more stable (less likely to change) than themselves. Policy components depend on capability components, not the reverse.
+- **Abstract Dependencies:** Where direct interaction is necessary, dependencies should be inverted through logical abstractions (e.g., event contracts, capability interfaces) rather than concrete implementations.
+
+## 13.2 Dependency Rules
+- **Acyclic Graph:** The component dependency structure must form a strict Directed Acyclic Graph (DAG). There must be no circular dependencies.
+- **Direction of Control:** The direction of logical control (who initiates an action) must not dictate the direction of dependency (who owns the contract).
+- **Asymmetric Knowledge:** An upstream capability component must not possess any domain knowledge of the downstream policy components that consume its outputs.
+
+## 13.3 Upstream Components
+- **Definition:** Components that produce data, facts, or capabilities that other components rely upon. They are lower in the dependency hierarchy.
+- **Characteristics:** Upstream components are highly stable, core capabilities (e.g., Sensor Data Ingestion, Signal Control Execution).
+- **Constraint:** Upstream components must remain strictly agnostic of downstream consumers. They must not format data or alter behaviour specifically for a downstream component.
+
+## 13.4 Downstream Components
+- **Definition:** Components that consume data, facts, or capabilities produced by other components. They are higher in the dependency hierarchy.
+- **Characteristics:** Downstream components orchestrate business rules, complex policies, or user-facing features (e.g., Incident Management, Reporting, Traffic Optimization).
+- **Constraint:** Downstream components must adapt to the logical contracts provided by upstream components, utilizing Anti-Corruption Layers to protect their internal models.
+
+## 13.5 Shared Dependencies
+- **Definition:** Foundational components that provide cross-cutting capabilities relied upon by nearly all other components (e.g., Identity and Access Management, Audit Logging, Telemetry).
+- **Constraint:** Shared dependencies must be exceptionally stable, highly available, and strictly bounded to their core mandate. They must not absorb domain-specific logic to appease a calling component.
+
+## 13.6 Dependency Isolation
+- **Data Isolation:** A dependency on a component does not grant direct access to that component's underlying data store. All interaction must pass through the component's logical boundary.
+- **Execution Isolation:** Components must not share execution context or memory space. The logical dependency exists at the boundary level, not the runtime memory level.
+- **Version Isolation:** Components must support backward-compatible versioning of their logical contracts to allow dependent components to upgrade at their own pace.
+
+## 13.7 Dependency Failure Behaviour
+- **Fail-Safe Operation:** If an upstream dependency fails, the downstream component must fail safely, either gracefully degrading its service or halting operation without causing data corruption.
+- **Isolating Failures:** Downstream components must employ logical circuit breakers or fallback mechanisms to prevent upstream failures from exhausting local resources or cascading further downstream.
+- **Default Behaviours:** Where acceptable within business rules, components should fall back to sensible defaults or cached state when a non-critical dependency is unavailable.
+
+## 13.8 Circular Dependency Prevention
+- **Event-Driven Decoupling:** The primary mechanism for breaking circular dependencies is the use of Domain Events. Instead of Component A calling Component B which calls Component A, Component B reacts to an event published by Component A.
+- **Component Splitting:** If two components exhibit a persistent circular dependency, it indicates a flaw in boundary definition. The overlapping responsibilities must be extracted into a new, independent upstream component.
+
+## 13.9 Dependency Governance
+- **Explicit Declaration:** All inter-component dependencies must be explicitly documented and architecturally approved. "Hidden" dependencies via shared databases or back-channel communication are prohibited.
+- **Review and Justification:** Introducing a new dependency requires architectural justification, proving that the capability cannot be logically achieved within the component's existing boundaries.
+- **Dependency Auditing:** The architecture team must periodically audit the dependency graph to identify unnecessary coupling and enforce the acyclic graph constraints.
+
+## 13.10 Dependency Summary
+The TrafficMind AI architecture relies on a strictly layered, acyclic dependency model. Foundational shared services (IAM, Audit) sit at the very bottom, ensuring systemic security and observability. Above them lie the core capability components (Sensor Ingestion, Signal Execution) which act as pure, stable upstream producers. Higher-level policy and orchestration components (Traffic Optimization, Incident Management, Reporting) sit at the top as downstream consumers. This model ensures that core capabilities can evolve independently of complex business policies, and that failures in complex policies do not disrupt the fundamental ability to monitor and control traffic infrastructure.
+
+# 14. Component Architecture Diagrams
+
+This section provides visual, implementation-independent representations of the component architecture, focusing strictly on logical boundaries, dependencies, and communication flow.
+
+## 14.1 Overall Component Architecture
+
+```mermaid
+graph TD
+    subgraph Presentation
+        CMP001[CMP-001 Dashboard]
+    end
+
+    subgraph Gateways
+        CMP015[CMP-015 Controlled Interaction Gateway]
+        CMP016[CMP-016 AI Governance Gateway]
+    end
+
+    subgraph Orchestration & Policy
+        CMP004[CMP-004 Incident]
+        CMP005[CMP-005 Workflow]
+        CMP017[CMP-017 Policy]
+        CMP018[CMP-018 Emergency Coordination]
+    end
+
+    subgraph Core Capabilities
+        CMP006[CMP-006 Camera Context]
+        CMP007[CMP-007 Asset Context]
+        CMP008[CMP-008 Map Context]
+        CMP010[CMP-010 Analytics]
+        CMP011[CMP-011 Reporting]
+        CMP014[CMP-014 Search]
+        CMP019[CMP-019 Integration]
+    end
+
+    subgraph Foundational Services
+        CMP002[CMP-002 Authentication]
+        CMP003[CMP-003 Authorization]
+        CMP009[CMP-009 Notification]
+        CMP012[CMP-012 Configuration]
+        CMP013[CMP-013 Audit]
+        CMP020[CMP-020 Monitoring]
+        CMP021[CMP-021 Logging]
+    end
+
+    Presentation --> Gateways
+    Gateways --> Orchestration & Policy
+    Gateways --> Core Capabilities
+    Orchestration & Policy --> Core Capabilities
+    Core Capabilities --> Foundational Services
+    Orchestration & Policy --> Foundational Services
+```
+
+## 14.2 Component Hierarchy
+
+```mermaid
+graph BT
+    %% Upward arrows represent "depends on" conceptually
+    CMP001[Dashboard] --> CMP015[Controlled Interaction Gateway]
+    CMP015 --> CMP004[Incident]
+    CMP015 --> CMP014[Search]
+    
+    CMP004 --> CMP006[Camera Context]
+    CMP004 --> CMP017[Policy]
+    
+    CMP014 --> CMP007[Asset Context]
+    CMP014 --> CMP008[Map Context]
+    
+    CMP006 --> CMP003[Authorization]
+    CMP006 --> CMP012[Configuration]
+    
+    CMP017 --> CMP012
+    
+    CMP003 --> CMP002[Authentication]
+    CMP012 --> CMP013[Audit]
+```
+
+## 14.3 Component Relationships
+
+```mermaid
+erDiagram
+    DASHBOARD ||--o{ GATEWAY : accesses
+    GATEWAY ||--o{ INCIDENT : routes-to
+    GATEWAY ||--o{ ANALYTICS : routes-to
+    INCIDENT ||--|{ WORKFLOW : initiates
+    INCIDENT }o--|| POLICY : evaluates
+    WORKFLOW ||--o{ INTEGRATION : executes
+    INTEGRATION ||--|{ ASSET_CONTEXT : updates
+    INCIDENT }o--o{ MAP_CONTEXT : references
+    EVERY_COMPONENT }o--|| AUDIT : records
+    EVERY_COMPONENT }o--|| LOGGING : writes
+```
+
+## 14.4 Component Dependencies
+
+```mermaid
+graph TD
+    A[CMP-004 Incident] -->|Reads| B[CMP-006 Camera Context]
+    A -->|Evaluates| C[CMP-017 Policy]
+    A -->|Triggers| D[CMP-005 Workflow]
+    D -->|Executes Action via| E[CMP-019 Integration]
+    E -->|Requires Auth| F[CMP-002 Authentication]
+    E -->|Checks Permissions| G[CMP-003 Authorization]
+    
+    H[CMP-018 Emergency Coordination] -->|Queries| A
+    H -->|Reads| I[CMP-008 Map Context]
+    
+    A -.->|Writes Audit Trail| J[CMP-013 Audit]
+    B -.->|Writes Logs| K[CMP-021 Logging]
+    D -.->|Updates Metric| L[CMP-020 Monitoring]
+```
+
+## 14.5 Component Collaboration
+
+```mermaid
+sequenceDiagram
+    participant INT as Integration (CMP-019)
+    participant INC as Incident (CMP-004)
+    participant WF as Workflow (CMP-005)
+    participant NOT as Notification (CMP-009)
+    participant AUD as Audit (CMP-013)
+
+    Note over INT: Camera detects anomaly
+    INT->>INC: Command: ProcessDetectionFact
+    INC-->>AUD: Event: CommandReceived
+    INC->>INC: Evaluate Business Rules
+    INC->>INC: State Change: IncidentCreated
+    INC--)WF: Event: IncidentCreated
+    INC--)NOT: Event: IncidentCreated
+    INC-->>AUD: Event: IncidentCreated
+    
+    Note over WF: Reacts to IncidentCreated
+    WF->>WF: Evaluate Playbook
+    WF--)INT: Command: ChangeSignalPhase
+    
+    Note over NOT: Reacts to IncidentCreated
+    NOT->>NOT: Route to specific operator
+```
+
+## 14.6 Ownership Boundaries
+
+```mermaid
+graph TB
+    subgraph Identity Context
+        CMP002[Authentication]
+        CMP003[Authorization]
+    end
+
+    subgraph Traffic & Incident Context
+        CMP004[Incident]
+        CMP005[Workflow]
+        CMP018[Emergency Coordination]
+        CMP017[Policy]
+    end
+
+    subgraph Spatial & Asset Context
+        CMP006[Camera Context]
+        CMP007[Asset Context]
+        CMP008[Map Context]
+    end
+
+    subgraph Insight Context
+        CMP010[Analytics]
+        CMP011[Reporting]
+        CMP014[Search]
+    end
+
+    subgraph Edge Context
+        CMP015[Controlled Interaction]
+        CMP016[AI Governance]
+        CMP019[Integration]
+    end
+
+    subgraph Observability Context
+        CMP013[Audit]
+        CMP020[Monitoring]
+        CMP021[Logging]
+    end
+
+    Traffic & Incident Context -.-> Spatial & Asset Context
+    Traffic & Incident Context -.-> Edge Context
+    Insight Context -.-> Traffic & Incident Context
+    Edge Context -.-> Identity Context
+```
+
+## 14.7 Layered Component Architecture
+
+```mermaid
+graph TD
+    classDef layer fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    
+    subgraph L1 [Layer 1: External Interfaces & Presentation]
+        CMP001(Dashboard)
+        CMP015(Controlled Interaction Gateway)
+        CMP016(AI Governance Gateway)
+    end
+    
+    subgraph L2 [Layer 2: Business Orchestration]
+        CMP004(Incident)
+        CMP005(Workflow)
+        CMP017(Policy)
+        CMP018(Emergency Coordination)
+    end
+    
+    subgraph L3 [Layer 3: Core Domain Capabilities]
+        CMP006(Camera Context)
+        CMP007(Asset Context)
+        CMP008(Map Context)
+        CMP010(Analytics)
+        CMP011(Reporting)
+        CMP019(Integration)
+        CMP014(Search)
+    end
+    
+    subgraph L4 [Layer 4: Foundational Capabilities]
+        CMP002(Authentication)
+        CMP003(Authorization)
+        CMP012(Configuration)
+        CMP009(Notification)
+        CMP013(Audit)
+        CMP020(Monitoring)
+        CMP021(Logging)
+    end
+
+    L1 -.->|Strict Downward Dependency| L2
+    L1 -.-> L3
+    L2 -.->|Strict Downward Dependency| L3
+    L3 -.->|Strict Downward Dependency| L4
+    L2 -.-> L4
+    L1 -.-> L4
+    
+    class L1,L2,L3,L4 layer;
+```
+
+# 15. Component Matrices
+
+## 15.1 Component Responsibility Matrix
+| Component ID | Component Name | Primary Responsibility |
+| :--- | :--- | :--- |
+| CMP-001 | Dashboard | Presenting unified operational UI |
+| CMP-002 | Authentication | Verifying actor identity |
+| CMP-003 | Authorization | Enforcing access policies |
+| CMP-004 | Incident | Managing incident lifecycles |
+| CMP-005 | Workflow | Orchestrating multi-step actions |
+| CMP-006 | Camera Context | Managing camera state and facts |
+| CMP-007 | Asset Context | Managing physical asset state |
+| CMP-008 | Map Context | Providing spatial/GIS topology |
+| CMP-009 | Notification | Routing alerts and messages |
+| CMP-010 | Analytics | Deriving insights and patterns |
+| CMP-011 | Reporting | Generating formatted reports |
+| CMP-012 | Configuration | Centralizing system settings |
+| CMP-013 | Audit | Recording verifiable compliance trails |
+| CMP-014 | Search | Providing global data discovery |
+| CMP-015 | Controlled Interaction Gateway | Securing external API interactions |
+| CMP-016 | AI Governance Gateway | Enforcing AI safety/compliance |
+| CMP-017 | Policy | Centralizing business rules |
+| CMP-018 | Emergency Coordination | Managing high-priority emergency flows |
+| CMP-019 | Integration | Connecting external legacy systems |
+| CMP-020 | Monitoring | Observing system health metrics |
+| CMP-021 | Logging | Preserving diagnostic records |
+
+## 15.2 Component Dependency Matrix
+*Key: U = Upstream (Independent), D = Downstream (Dependent), S = Shared/Foundational*
+| Component | Layer / Type | Key Upstream Dependencies (Reads from) | Key Downstream Dependencies (Consumed by) |
+| :--- | :--- | :--- | :--- |
+| CMP-001 | D (Presentation) | Gateways (CMP-015, CMP-016) | None (Top-level) |
+| CMP-002 | S (Foundation) | None (Self-contained) | All Components |
+| CMP-003 | S (Foundation) | CMP-002 | All Components |
+| CMP-004 | D (Orchestration) | CMP-006, CMP-007, CMP-017 | CMP-005, CMP-009, CMP-010 |
+| CMP-005 | D (Orchestration) | CMP-004, CMP-017 | CMP-019, CMP-009 |
+| CMP-006 | U (Capability) | None (Originates state) | CMP-004, CMP-010, CMP-014 |
+| CMP-007 | U (Capability) | None (Originates state) | CMP-004, CMP-014 |
+| CMP-008 | U (Capability) | None (Originates state) | CMP-004, CMP-018 |
+| CMP-009 | D (Capability) | CMP-004, CMP-005 | CMP-001 |
+| CMP-010 | D (Capability) | CMP-006, CMP-007 | CMP-011 |
+| CMP-011 | D (Capability) | CMP-010 | CMP-001 |
+| CMP-012 | S (Foundation) | None | All Components |
+| CMP-013 | S (Foundation) | None | None (Purely consumed via events) |
+| CMP-014 | D (Capability) | CMP-006, CMP-007, CMP-004 | CMP-015, CMP-001 |
+| CMP-015 | D (Presentation) | Core & Orchestration | CMP-001 |
+| CMP-016 | D (Presentation) | AI Models | CMP-001, CMP-015 |
+| CMP-017 | U (Orchestration) | None | CMP-004, CMP-005 |
+| CMP-018 | D (Orchestration) | CMP-008, CMP-004 | CMP-019 |
+| CMP-019 | U (Capability) | None | CMP-005, CMP-018 |
+| CMP-020 | S (Foundation) | None | All Components |
+| CMP-021 | S (Foundation) | None | All Components |
+
+## 15.3 Component Interaction Matrix
+*Key: C = Command (Synchronous/Asynchronous), E = Event (Asynchronous), Q = Query (Synchronous)*
+| Source Component | Target Component | Interaction Type | Purpose |
+| :--- | :--- | :--- | :--- |
+| Any Gateway | Core/Orchestration | C, Q | User actions, data retrieval |
+| CMP-004 (Incident) | CMP-005 (Workflow) | E | Triggers playbook execution |
+| CMP-004 (Incident) | CMP-017 (Policy) | Q | Evaluates resolution rules |
+| CMP-005 (Workflow) | CMP-019 (Integration) | C | Executes external system action |
+| CMP-019 (Integration) | CMP-006 (Camera Context) | E | Updates detected anomalies |
+| All Components | CMP-003 (Authorization) | Q | Verifies permissions |
+| All Components | CMP-013 (Audit) | E | Emits compliance records |
+
+## 15.4 Component Ownership Matrix
+| Component | Domain Context | State Ownership (Sovereign Data) |
+| :--- | :--- | :--- |
+| CMP-001 | Presentation | UI State, View Preferences |
+| CMP-002, 003 | Identity & Access | Credentials, Roles, Tokens |
+| CMP-004 | Traffic & Incident | Incident Records, Status, Priority |
+| CMP-005, 017 | Traffic & Incident | Playbooks, Execution State, Rules |
+| CMP-018 | Traffic & Incident | Emergency Corridors, Evacuation State |
+| CMP-006, 007, 008 | Spatial & Asset | Camera config, Signals, Map layers |
+| CMP-009 | Observability | Alert templates, Delivery history |
+| CMP-010, 011, 014 | Insight | Aggregated metrics, Report definitions |
+| CMP-015, 016, 019 | Edge | API keys, Gateway routing |
+| CMP-012, 013, 020, 021 | Observability | Configs, Audit logs, Metrics, Traces |
+
+## 15.5 Component Security Matrix
+| Component | Security Boundary Constraint | Audit Priority |
+| :--- | :--- | :--- |
+| CMP-015, 016 | Zero-Trust External Entry Point | Critical (Ingress/Egress) |
+| CMP-002, 003 | Cryptographic Trust Anchor | Critical (Auth) |
+| CMP-004, 018 | PII / Sensitive Operational Data | High (Data Access) |
+| CMP-013, 021 | Immutable Append-Only Store | Critical (Tamper Evident) |
+| CMP-006, 007 | Physical Infrastructure Proxies | High (Command Integrity) |
+| Others | Internal Authenticated Context | Medium |
+
+## 15.6 Component Failure Matrix
+| Component | Failure Impact | Graceful Degradation Strategy |
+| :--- | :--- | :--- |
+| CMP-002, 003 | Total system lockdown | Cache validated tokens |
+| CMP-015, 016 | Loss of UI/API access | Autonomous core processing continues |
+| CMP-004 | Loss of manual incident control | Automated workflows use fallback rules |
+| CMP-006, 007 | Stale contextual data | Analytics degrade, UI shows 'stale' flag |
+| CMP-013, 021 | Compliance violation | Spool locally, alert immediately |
+| CMP-010, 011 | Loss of historical insights | Core real-time operations unaffected |
+| CMP-019 | Disconnected legacy systems | Queue commands, retry exponentially |
+
+## 15.7 Component Traceability Matrix
+This matrix ensures every component maps directly back to the approved Logical Architecture and Master Architecture without introducing unauthorized capabilities.
+
+| Component ID | Logical Service | Logical Service Group | Logical Domain | Business Domain | Master Architecture Ref |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| CMP-001 | Dashboard SV | Presentation SG | User Experience | Operational Interface | TMA-ARCH-001 Sec 4.1 |
+| CMP-002 | Authentication SV | IAM SG | Security | Governance & Trust | TMA-ARCH-001 Sec 4.2 |
+| CMP-003 | Authorization SV | IAM SG | Security | Governance & Trust | TMA-ARCH-001 Sec 4.2 |
+| CMP-004 | Incident SV | Incident Management SG | Traffic Operations | Core Operations | TMA-ARCH-001 Sec 4.3 |
+| CMP-005 | Workflow SV | Automation SG | Traffic Operations | Core Operations | TMA-ARCH-001 Sec 4.3 |
+| CMP-006 | Camera SV | Asset Context SG | Infrastructure | Physical Twin | TMA-ARCH-001 Sec 4.4 |
+| CMP-007 | Asset SV | Asset Context SG | Infrastructure | Physical Twin | TMA-ARCH-001 Sec 4.4 |
+| CMP-008 | Map SV | Spatial Context SG | Infrastructure | Physical Twin | TMA-ARCH-001 Sec 4.4 |
+| CMP-009 | Notification SV | Communication SG | User Experience | Operational Interface | TMA-ARCH-001 Sec 4.1 |
+| CMP-010 | Analytics SV | Intelligence SG | Insight | Data & Analytics | TMA-ARCH-001 Sec 4.5 |
+| CMP-011 | Reporting SV | Intelligence SG | Insight | Data & Analytics | TMA-ARCH-001 Sec 4.5 |
+| CMP-012 | Configuration SV | Control SG | System Management | Foundational | TMA-ARCH-001 Sec 4.6 |
+| CMP-013 | Audit SV | Compliance SG | Security | Governance & Trust | TMA-ARCH-001 Sec 4.2 |
+| CMP-014 | Search SV | Discovery SG | User Experience | Operational Interface | TMA-ARCH-001 Sec 4.1 |
+| CMP-015 | API Gateway SV | Boundary SG | Integration | Edge Services | TMA-ARCH-001 Sec 4.7 |
+| CMP-016 | AI Gateway SV | Boundary SG | Integration | Edge Services | TMA-ARCH-001 Sec 4.7 |
+| CMP-017 | Policy SV | Automation SG | Traffic Operations | Core Operations | TMA-ARCH-001 Sec 4.3 |
+| CMP-018 | Emergency SV | Critical Operations SG | Traffic Operations | Core Operations | TMA-ARCH-001 Sec 4.3 |
+| CMP-019 | Integration SV | Extensibility SG | Integration | Edge Services | TMA-ARCH-001 Sec 4.7 |
+| CMP-020 | Monitoring SV | Observability SG | System Management | Foundational | TMA-ARCH-001 Sec 4.6 |
+| CMP-021 | Logging SV | Observability SG | System Management | Foundational | TMA-ARCH-001 Sec 4.6 |
+
+# 16. Component Architecture Conclusion
+
+## 16.1 Architectural Constraints
+- **Strict Logical Boundaries:** Components must interact solely via defined interfaces, commands, events, or queries. No component shall bypass these boundaries (e.g., via shared databases).
+- **Acyclic Dependencies:** Component dependencies must remain purely downstream; circular dependencies are explicitly prohibited.
+- **Implementation Independence:** The architecture remains strictly logical; it does not mandate specific technologies, frameworks, APIs, HTTP, or deployment environments.
+
+## 16.2 Component Governance
+- **Boundary Enforcement:** The architecture team must enforce component boundaries during technical design and implementation.
+- **Integration Approval:** Any new interactions between components must be reviewed to ensure they align with the Component Interaction Matrix and do not violate dependency rules.
+- **Anti-Corruption Integrity:** Bounded contexts must be respected. Components consuming data from outside their context must employ Anti-Corruption Layers to prevent domain leakage.
+
+## 16.3 Component Versioning
+- **Independent Evolution:** Each component must be versioned and deployed independently.
+- **Contract Compatibility:** Any changes to a component's external interface (published events, accepted commands) must remain backward compatible or undergo a formalized deprecation lifecycle.
+- **Semantic Versioning:** Component interfaces and message schemas must adhere to semantic versioning to clearly signal breaking changes.
+
+## 16.4 Traceability Summary
+This document serves as a strict, component-level realization of TMA-ARCH-001 (Master System Architecture) and TMA-ARCH-002 (Logical Architecture). Every identified component maps directly to an approved Logical Service within a specific Logical Service Group and Business Domain. 
+
+## 16.5 Architectural Notes
+- The models and matrices defined herein prioritize logical separation of concerns over short-term implementation convenience.
+- By strictly isolating state and logic, the system ensures resilience against localized failures and agility in scaling specific capabilities independently.
+- Event choreography is favoured over request/response to ensure temporal decoupling and fault tolerance.
+
+## 16.6 Future Evolution
+- **Technology Selection:** This document is the immediate predecessor to technology evaluation. Future phases will select specific programming languages, data stores, and event brokers that fulfill these logical constraints.
+- **API Design:** Specific API contracts (REST, gRPC, AsyncAPI) will be designed and mapped directly against the logical commands, events, and queries defined in this document.
+- **Deployment Topology:** Physical deployment architectures (e.g., microservices, containers, edge nodes) will be derived from the logical boundaries established here.
+
+## 16.7 Completion Checklist
+- [x] All Approved Logical Services translated into Components
+- [x] Component Profiles defined (Purpose, Boundaries, State, Rules)
+- [x] Component Collaboration and Dependency Architectures established
+- [x] Component Architecture Visuals and Models generated
+- [x] Component Matrices mapped for full traceability
+- [x] Confirm no new capabilities were introduced
+- [x] Confirm no scope was expanded
+- [x] Confirm no architecture decisions from TMA-ARCH-001/002 were changed
+
+## 16.8 Final Summary
+
+This document, **TMA-ARCH-003 Component Architecture**, successfully defines the logical software components required to deliver the TrafficMind AI system.
+
+It is confirmed that:
+- **No new capabilities were introduced.**
+- **No scope was expanded.**
+- **No architecture decisions were changed.**
+- **This document is a component-level realization of TMA-ARCH-001 and TMA-ARCH-002.**
+
+This document has fulfilled its mandate and establishes the strict boundaries necessary for subsequent technology selection and API design.
+
+The document is ready to become:
+**TMA-ARCH-003**
+**Component Architecture**
+**Version 1.0**
+**Approved Baseline**
