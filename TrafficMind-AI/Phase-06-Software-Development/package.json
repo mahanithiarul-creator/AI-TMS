@@ -1,0 +1,19 @@
+{
+  "name": "trafficmind-ai",
+  "version": "1.0.0",
+  "description": "TrafficMind AI System - Phase 06 Software Development Workspace",
+  "private": true,
+  "workspaces": [
+    "02_Frontend/*",
+    "03_Backend/*",
+    "05_AI/*",
+    "06_Integration/*",
+    "07_Testing/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  }
+}
